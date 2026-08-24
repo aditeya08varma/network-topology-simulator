@@ -1,8 +1,8 @@
 # Distributed Virtual Network Topology & Protocol Simulator
 
-An automated network lab emulation environment built on Linux network
-namespaces (`ip netns`) and Open vSwitch, featuring a from-scratch DHCP
-lease state machine and a link-state routing protocol implementation.
+This project is an automated network lab. It runs on Linux network
+namespaces (`ip netns`) and Open vSwitch. It includes a DHCP lease state
+machine built from scratch and a link-state routing protocol.
 
 ## Architecture
 
@@ -20,18 +20,19 @@ lease state machine and a link-state routing protocol implementation.
 
 ## Requirements
 
-The topology/link/telemetry layers shell out to `ip netns`, `ovs-vsctl`,
-and `tcpdump`, so building and running the *real* lab requires:
+The topology, link, and telemetry code calls `ip netns`, `ovs-vsctl`, and
+`tcpdump` directly. To build and run the real lab, you need:
 
-- **Linux**, run as **root** (namespace, veth, and sysctl operations are privileged)
-- `iproute2`, `tcpdump` (usually preinstalled)
-- Open vSwitch: `sudo apt-get install openvswitch-switch`
-- Mininet, if you'd rather drive the topology through its Python API instead
-  of raw `ip netns`: `sudo apt-get install mininet`
+- **Linux**, run as **root**. Namespace, veth, and sysctl operations all need root.
+- `iproute2` and `tcpdump`. Most Linux systems already have these.
+- Open vSwitch. Install it with `sudo apt-get install openvswitch-switch`.
+- Mininet, if you'd rather drive the topology through its Python API
+  instead of raw `ip netns`. Install it with `sudo apt-get install mininet`.
 
-The **protocol logic itself — the DHCP state machine and the link-state
-Dijkstra routing engine — is plain Python with no OS dependencies**, and
-its tests run on any platform (see [Running tests](#running-tests) below).
+The protocol logic itself is different. The DHCP state machine and the
+link-state Dijkstra routing engine are plain Python with no OS
+dependencies. Their tests run on any platform. See
+[Running tests](#running-tests) below.
 
 ## Install
 
@@ -46,11 +47,11 @@ pip install -r requirements.txt
 sudo ./scripts/run_testbed.sh
 ```
 
-This checks for root, Linux, and a running OVS daemon before invoking
-`pytest`, which then also exercises the root-gated integration tests
-(namespace creation, veth wiring, real ping/PMTUD checks).
+This script checks for root, Linux, and a running OVS daemon first. Then
+it runs `pytest`, which also runs the root-gated integration tests:
+namespace creation, veth wiring, and real ping/PMTUD checks.
 
-To drive the topology directly instead:
+You can also drive the topology directly:
 
 ```python
 from topology.builder import TopologyController
@@ -67,42 +68,44 @@ controller.teardown()
 pytest tests/ -v
 ```
 
-Every test file is split into:
+Every test file has two kinds of tests:
 
-- **Unit tests** (no root/Linux needed) — the DHCP Discover→Offer→Request→Ack
-  handshake, lease collision/expiration, the Dijkstra shortest-path resolver,
-  LSA sequence-number handling, and subnet allocation. These run anywhere,
-  including this repo's own macOS dev environment.
-- **Integration tests** (`@requires_root_linux`) — real namespace/OVS
-  provisioning, ping-mesh reachability, PMTUD fragmentation checks, and
-  live link-failure re-convergence. These auto-skip unless run as root on
-  Linux, per `tests/conftest.py`.
+- **Unit tests.** These need no root and no Linux. They cover the DHCP
+  Discover, Offer, Request, Ack handshake, lease collisions, lease
+  expiration, the Dijkstra shortest-path resolver, LSA sequence-number
+  handling, and subnet allocation. These run anywhere, including on this
+  repo's own macOS dev environment.
+- **Integration tests.** These are marked `@requires_root_linux`. They
+  cover real namespace and OVS setup, ping-mesh reachability, PMTUD
+  fragmentation checks, and live link-failure recovery. They skip
+  automatically unless you run them as root on Linux. See
+  `tests/conftest.py` for the skip logic.
 
 ## Module map
 
 | Path | Responsibility |
 |---|---|
-| `topology/nodes.py` | `Router`, `Host`, `Switch` — namespace + OVS wrappers |
+| `topology/nodes.py` | `Router`, `Host`, `Switch` classes. Namespace and OVS wrappers. |
 | `topology/link_manager.py` | veth pair creation, subnet allocation, MTU, link up/down |
 | `topology/builder.py` | assembles the R1/R2/SW1/H1/H2/DHCPD lab topology |
 | `protocols/dhcp_server.py` | DHCP wire codec, lease state machine, SQLite ACID lease store |
 | `protocols/dhcp_client.py` | handshake runner, T1/T2/expiry renewal timers |
 | `protocols/routing_engine.py` | LSA database, Dijkstra, kernel route injection |
 | `telemetry/packet_collector.py` | pcap capture, PMTUD log parsing, convergence/loss tracking |
-| `tests/` | pytest suite — reachability, DHCP lifecycle, MTU/PMTUD, fault recovery |
+| `tests/` | pytest suite covering reachability, DHCP lifecycle, MTU/PMTUD, fault recovery |
 
 ## Design notes
 
-- **DHCP packets are hand-encoded/decoded** against the RFC 2131 BOOTP wire
-  format (`protocols/dhcp_server.py:build_dhcp_packet` /
-  `parse_dhcp_packet`) rather than depending on a packet-crafting library,
-  so the state machine has zero non-stdlib dependencies and can be unit
-  tested without a socket or root at all — see `DHCPClient`'s
-  `LoopbackTransport`, which wires a client directly to a server instance
-  in-process.
-- **Renewal timers** follow the standard T1 = 0.5×lease, T2 = 0.875×lease
-  schedule (`protocols/dhcp_client.py`).
-- **Route injection** uses `ip route replace` via `subprocess`
-  (`KernelRouteInjector`) rather than `pyroute2`, to keep the hard
-  dependency list at just `pytest`. Swapping in a netlink-based injector is
-  a drop-in replacement of that one class.
+- DHCP packets are encoded and decoded by hand, following the RFC 2131
+  BOOTP wire format (`protocols/dhcp_server.py:build_dhcp_packet` /
+  `parse_dhcp_packet`). This project does not use a packet-crafting
+  library. Because of this, the state machine has zero non-stdlib
+  dependencies and can be unit tested without a socket or root at all.
+  See `DHCPClient`'s `LoopbackTransport`, which wires a client directly
+  to a server instance in the same process.
+- Renewal timers follow the standard schedule: T1 is 50% of the lease
+  time, and T2 is 87.5% of the lease time. See `protocols/dhcp_client.py`.
+- Route injection uses `ip route replace` through `subprocess`
+  (`KernelRouteInjector`), instead of `pyroute2`. This keeps the only
+  hard dependency at `pytest`. You can swap in a netlink-based injector
+  by replacing that one class.
