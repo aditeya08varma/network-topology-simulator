@@ -1,0 +1,15 @@
+# Testing
+pytest>=7.4
+pytest-timeout>=2.2
+
+# Everything else (DHCP packet codec, Dijkstra, lease store) is stdlib-only
+# by design, so the unit test suite runs anywhere with just the two
+# packages above.
+#
+# System-level dependencies used by the integration harness are NOT
+# pip-installable — install them via your OS package manager:
+#   - Mininet / Open vSwitch:  sudo apt-get install mininet openvswitch-switch
+#   - iproute2, tcpdump:       preinstalled on most Linux distros
+#
+# Optional swap-in for KernelRouteInjector (netlink instead of `ip route`):
+#   pyroute2>=0.7.9
