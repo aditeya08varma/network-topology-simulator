@@ -14,6 +14,7 @@ import shutil
 import pytest
 
 
+# Checks whether this code is running as root on a Linux machine.
 def _is_linux_root() -> bool:
     return platform.system() == "Linux" and hasattr(os, "geteuid") and os.geteuid() == 0
 
@@ -29,6 +30,7 @@ requires_ovs = pytest.mark.skipif(
 )
 
 
+# Builds a real topology for a test to use, then tears it down afterward.
 @pytest.fixture
 def built_topology():
     from topology.builder import TopologyController

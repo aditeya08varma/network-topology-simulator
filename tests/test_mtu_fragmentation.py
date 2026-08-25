@@ -8,11 +8,13 @@ from conftest import requires_root_linux
 from topology.link_manager import JUMBO_MTU, STANDARD_MTU
 
 
+# Checks that the standard and jumbo MTU constants have the right values.
 def test_mtu_constants():
     assert STANDARD_MTU == 1500
     assert JUMBO_MTU == 9000
 
 
+# Checks that a packet too big for the link gets an ICMP fragmentation-needed reply.
 @requires_root_linux
 def test_oversized_df_packet_triggers_fragmentation_needed(built_topology):
     from telemetry.packet_collector import PacketCapture, find_fragmentation_needed, ping

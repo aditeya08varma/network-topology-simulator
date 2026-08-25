@@ -19,10 +19,12 @@ class Subnet:
     network: ipaddress.IPv4Network
     _next_host: int = 1
 
+    # Builds a Subnet from a CIDR string like "10.0.1.0/24".
     @classmethod
     def from_cidr(cls, cidr: str) -> "Subnet":
         return cls(network=ipaddress.IPv4Network(cidr))
 
+    # Hands out the next free address in this subnet.
     def allocate(self) -> ipaddress.IPv4Address:
         addr = self.network[self._next_host]
         if addr not in self.network or addr == self.network.broadcast_address:
@@ -30,6 +32,7 @@ class Subnet:
         self._next_host += 1
         return addr
 
+    # Formats an address together with this subnet's prefix length, like "10.0.1.1/24".
     def with_prefixlen(self, addr: ipaddress.IPv4Address) -> str:
         return f"{addr}/{self.network.prefixlen}"
 
@@ -38,9 +41,11 @@ class LinkManager:
     """Creates and tears down veth pairs connecting two namespaces, or a
     namespace and an OVS bridge port."""
 
+    # Sets up an empty list to remember every veth pair this manager creates.
     def __init__(self) -> None:
         self._links: list[tuple[str, str]] = []
 
+    # Creates a pair of virtual ethernet interfaces that stay connected to each other.
     def create_veth_pair(self, name_a: str, name_b: str) -> None:
         subprocess.run(
             ["ip", "link", "add", name_a, "type", "veth", "peer", "name", name_b],
@@ -48,9 +53,11 @@ class LinkManager:
         )
         self._links.append((name_a, name_b))
 
+    # Moves one interface into a given network namespace.
     def move_to_namespace(self, iface_name: str, namespace: str) -> None:
         subprocess.run(["ip", "link", "set", iface_name, "netns", namespace], check=True)
 
+    # Connects two nodes with a veth pair and gives each end an address from the subnet.
     def attach_link(
         self,
         node_a: Node,
@@ -77,6 +84,7 @@ class LinkManager:
 
         return str(addr_a), str(addr_b)
 
+    # Connects a node to the OVS bridge with a veth pair and gives it an address.
     def attach_to_bridge(
         self,
         node: Node,
@@ -99,6 +107,7 @@ class LinkManager:
         node.bring_interface_up(iface_node)
         return str(addr)
 
+    # Turns one interface on or off, used to simulate a link failing.
     def set_link_state(self, node: Node, iface_name: str, up: bool) -> None:
         """Fault injection primitive: toggle a link up/down to test
         route re-convergence."""
@@ -107,6 +116,7 @@ class LinkManager:
         else:
             node.bring_interface_down(iface_name)
 
+    # Deletes every veth pair this manager created.
     def teardown_all(self) -> None:
         for name_a, _ in self._links:
             subprocess.run(["ip", "link", "del", name_a], check=False)

@@ -2,7 +2,7 @@
 allocator, with an ACID (SQLite-transaction backed) lease store.
 
 Packet encode/decode is hand-rolled against the BOOTP/DHCP wire format so
-the state machine can be unit tested without root or a real socket — the
+the state machine can be unit tested without root or a real socket. The
 protocol handlers are pure functions of (packet in) -> (packet out).
 """
 from __future__ import annotations
@@ -63,20 +63,24 @@ class Lease:
     lease_time: int = 3600
     bound_at: float = 0.0
 
+    # Works out when this lease should be renewed, at half its lifetime.
     @property
     def t1(self) -> float:
         """Renewal timer: 50% of the lease elapsed."""
         return self.bound_at + 0.5 * self.lease_time
 
+    # Works out when this lease should be rebound, near the end of its lifetime.
     @property
     def t2(self) -> float:
         """Rebinding timer: 87.5% of the lease elapsed."""
         return self.bound_at + 0.875 * self.lease_time
 
+    # Works out the exact moment this lease stops being valid.
     @property
     def expiry(self) -> float:
         return self.bound_at + self.lease_time
 
+    # Checks whether this lease has passed its expiry time.
     def is_expired(self, now: Optional[float] = None) -> bool:
         now = now if now is not None else time.time()
         return self.state in (LeaseState.BOUND, LeaseState.RENEWING, LeaseState.REBINDING) and now >= self.expiry
@@ -86,6 +90,7 @@ class LeaseStore:
     """ACID lease persistence via sqlite3 transactions. Defaults to an
     in-memory database; pass a file path to persist across restarts."""
 
+    # Opens the lease database and creates the leases table if it doesn't exist yet.
     def __init__(self, db_path: str = ":memory:") -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._lock = threading.Lock()
@@ -102,6 +107,7 @@ class LeaseStore:
         )
         self._conn.commit()
 
+    # Saves a lease to the database, replacing any older record for the same device.
     def commit_lease(self, lease: Lease) -> None:
         with self._lock, self._conn:
             self._conn.execute(
@@ -115,6 +121,7 @@ class LeaseStore:
                 (lease.mac, lease.ip, lease.state.value, lease.lease_time, lease.bound_at),
             )
 
+    # Looks up a lease by the device's MAC address.
     def get_by_mac(self, mac: str) -> Optional[Lease]:
         with self._lock:
             row = self._conn.execute(
@@ -122,6 +129,7 @@ class LeaseStore:
             ).fetchone()
         return self._row_to_lease(row) if row else None
 
+    # Looks up a lease by its IP address.
     def get_by_ip(self, ip: str) -> Optional[Lease]:
         with self._lock:
             row = self._conn.execute(
@@ -129,15 +137,18 @@ class LeaseStore:
             ).fetchone()
         return self._row_to_lease(row) if row else None
 
+    # Returns every lease currently stored.
     def all_leases(self) -> list[Lease]:
         with self._lock:
             rows = self._conn.execute("SELECT mac, ip, state, lease_time, bound_at FROM leases").fetchall()
         return [self._row_to_lease(r) for r in rows]
 
+    # Marks a lease as released so its address can be reused.
     def release(self, mac: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("UPDATE leases SET state=? WHERE mac=?", (LeaseState.RELEASED.value, mac))
 
+    # Turns one database row back into a Lease object.
     @staticmethod
     def _row_to_lease(row) -> Lease:
         mac, ip, state, lease_time, bound_at = row
@@ -156,14 +167,17 @@ class DHCPPacket:
     options: dict[int, bytes] = field(default_factory=dict)
 
 
+# Turns a MAC address string like "aa:bb:cc:dd:ee:ff" into raw bytes.
 def _mac_to_bytes(mac: str) -> bytes:
     return bytes(int(x, 16) for x in mac.split(":"))
 
 
+# Turns raw MAC address bytes back into a readable string.
 def _mac_from_bytes(b: bytes) -> str:
     return ":".join(f"{byte:02x}" for byte in b[:6])
 
 
+# Turns a DHCPPacket object into the raw bytes sent over the network.
 def build_dhcp_packet(pkt: DHCPPacket) -> bytes:
     header = struct.pack(
         "!BBBBI HH 4s4s4s4s 16s 64s 128s",
@@ -185,6 +199,7 @@ def build_dhcp_packet(pkt: DHCPPacket) -> bytes:
     return header + bytes(options)
 
 
+# Turns raw bytes received over the network back into a DHCPPacket object.
 def parse_dhcp_packet(data: bytes) -> DHCPPacket:
     op, _htype, _hlen, _hops, xid, _secs, _flags = struct.unpack("!BBBBIHH", data[:12])
     ciaddr = socket.inet_ntoa(data[12:16])
@@ -223,15 +238,18 @@ class DHCPPool:
     dns: str = "8.8.8.8"
     _allocated: set[str] = field(default_factory=set)
 
+    # Goes through the subnet and yields every address that isn't taken yet.
     def available_ips(self):
         for host in self.network.hosts():
             addr = str(host)
             if addr not in self._allocated and addr != self.router:
                 yield addr
 
+    # Marks an address as taken.
     def reserve(self, ip: str) -> None:
         self._allocated.add(ip)
 
+    # Marks an address as free again.
     def free(self, ip: str) -> None:
         self._allocated.discard(ip)
 
@@ -241,12 +259,14 @@ class DHCPServer:
     packet-in/packet-out transforms; `serve_forever` is the thin real-socket
     loop around them (needs root to bind :67)."""
 
+    # Sets up the server with its address pool, lease store, and server ID.
     def __init__(self, pool: DHCPPool, store: Optional[LeaseStore] = None, server_id: str = "10.0.1.1"):
         self.pool = pool
         self.store = store or LeaseStore()
         self.server_id = server_id
         self._sock: Optional[socket.socket] = None
 
+    # Handles a DHCPDISCOVER by picking a free address and offering it.
     def handle_discover(self, pkt: DHCPPacket) -> DHCPPacket:
         existing = self.store.get_by_mac(pkt.chaddr)
         if existing and existing.state in (LeaseState.BOUND, LeaseState.OFFERED) and not existing.is_expired():
@@ -262,6 +282,7 @@ class DHCPServer:
         self.pool.reserve(offer_ip)
         return self._build_reply(pkt, OP_DHCPOFFER, offer_ip)
 
+    # Handles a DHCPREQUEST by confirming the address, or rejecting it if it's already taken.
     def handle_request(self, pkt: DHCPPacket) -> DHCPPacket:
         requested_raw = pkt.options.get(OPT_REQUESTED_IP)
         requested_ip = socket.inet_ntoa(requested_raw) if requested_raw else pkt.ciaddr
@@ -280,12 +301,14 @@ class DHCPServer:
         self.pool.reserve(requested_ip)
         return self._build_reply(pkt, OP_DHCPACK, requested_ip)
 
+    # Handles a DHCPRELEASE by freeing up the address for someone else.
     def handle_release(self, pkt: DHCPPacket) -> None:
         lease = self.store.get_by_mac(pkt.chaddr)
         self.store.release(pkt.chaddr)
         if lease:
             self.pool.free(lease.ip)
 
+    # Finds every lease that has expired and frees its address.
     def sweep_expired(self) -> list[Lease]:
         """Releases any bound lease whose expiry has passed. Call this
         periodically (e.g. from a timer loop alongside serve_forever)."""
@@ -298,6 +321,7 @@ class DHCPServer:
                 expired.append(lease)
         return expired
 
+    # Builds a reply packet carrying the offered address and DHCP options.
     def _build_reply(self, request: DHCPPacket, msg_type: int, your_ip: str) -> DHCPPacket:
         options = {
             OPT_SUBNET_MASK: socket.inet_aton(str(self.pool.network.netmask)),
@@ -312,6 +336,7 @@ class DHCPServer:
             siaddr=self.server_id, msg_type=msg_type, options=options,
         )
 
+    # Listens for real DHCP traffic on port 67 and answers it forever.
     def serve_forever(self, bind_addr: str = "0.0.0.0") -> None:
         """Real UDP:67 listener. Requires root (privileged port) and should
         be run inside the DHCPD node's network namespace."""
@@ -327,6 +352,7 @@ class DHCPServer:
         finally:
             self._sock.close()
 
+    # Figures out what kind of DHCP message just arrived and calls the right handler.
     def _dispatch(self, data: bytes) -> None:
         pkt = parse_dhcp_packet(data)
         reply: Optional[DHCPPacket] = None

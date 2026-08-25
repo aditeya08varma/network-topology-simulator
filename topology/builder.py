@@ -30,6 +30,7 @@ class TopologyController:
     switches: dict[str, Switch] = field(default_factory=dict)
     graph_edges: list[tuple[str, str, float]] = field(default_factory=list)
 
+    # Creates every namespace, the switch, and all the links that make up the lab topology.
     def build(self) -> None:
         r1 = Router(name="R1", namespace="ns-r1")
         r2 = Router(name="R2", namespace="ns-r2")
@@ -62,6 +63,7 @@ class TopologyController:
 
         logger.info("topology built: %s", list(self.nodes))
 
+    # Turns the physical links into link-state advertisements a routing engine can use.
     def lsas(self):
         """Converts the physical topology into initial link-state
         advertisements, ready to hand to a RoutingEngine per router."""
@@ -73,6 +75,7 @@ class TopologyController:
             adjacency.setdefault(b, {})[a] = cost
         return [LinkStateAdvertisement(router_id=r, neighbors=n, sequence=1) for r, n in adjacency.items()]
 
+    # Deletes every namespace and switch created for the topology.
     def teardown(self) -> None:
         for node in self.nodes.values():
             node.delete_namespace()

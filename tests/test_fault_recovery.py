@@ -16,6 +16,7 @@ from protocols.routing_engine import (
 )
 
 
+# Builds a small test network with two equal-cost paths between R1 and R3.
 def _sample_graph() -> TopologyGraph:
     """R1-R2-R3 primary path, R1-R4-R3 equal-cost alternate."""
     graph = TopologyGraph()
@@ -26,12 +27,14 @@ def _sample_graph() -> TopologyGraph:
     return graph
 
 
+# Checks that Dijkstra finds the correct shortest distance.
 def test_dijkstra_finds_shortest_path():
     graph = _sample_graph()
     distances, _ = dijkstra(graph, "R1")
     assert distances["R3"] == 2
 
 
+# Checks that the routing table points to a real neighbor for each destination.
 def test_routing_table_picks_correct_next_hop():
     graph = _sample_graph()
     table = build_routing_table(graph, "R1")
@@ -39,6 +42,7 @@ def test_routing_table_picks_correct_next_hop():
     assert table["R3"] in ("R2", "R4")  # two equal-cost paths exist
 
 
+# Checks that losing a link makes the router switch to the other path.
 def test_link_failure_triggers_reconvergence_to_alternate_path():
     engine = RoutingEngine("R1")
     engine.graph = _sample_graph()
@@ -52,6 +56,7 @@ def test_link_failure_triggers_reconvergence_to_alternate_path():
     assert result.duration_seconds < 1.0
 
 
+# Checks that an old LSA doesn't overwrite a newer one.
 def test_lsa_with_stale_sequence_is_ignored():
     graph = TopologyGraph()
     lsa_new = LinkStateAdvertisement(router_id="R2", neighbors={"R1": 1, "R3": 1}, sequence=5)
@@ -62,6 +67,7 @@ def test_lsa_with_stale_sequence_is_ignored():
     assert graph.neighbors("R2")["R1"] == 1  # unchanged by the stale LSA
 
 
+# Checks that a newer LSA does update the topology.
 def test_lsa_with_newer_sequence_updates_topology():
     graph = TopologyGraph()
     graph.receive_lsa(LinkStateAdvertisement(router_id="R2", neighbors={"R1": 1}, sequence=1))
@@ -71,6 +77,7 @@ def test_lsa_with_newer_sequence_updates_topology():
     assert graph.neighbors("R2")["R1"] == 5
 
 
+# Checks the packet-loss tracker on a real topology after a link goes down.
 @requires_root_linux
 def test_link_down_triggers_real_reconvergence(built_topology):
     """Integration test: tears an interface down and verifies the

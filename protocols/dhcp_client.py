@@ -40,7 +40,9 @@ logger = logging.getLogger(__name__)
 
 
 class Transport(Protocol):
+    # Sends raw bytes out, however the specific transport does that.
     def send(self, data: bytes) -> None: ...
+    # Waits for raw bytes to arrive, however the specific transport does that.
     def recv(self, timeout: float) -> Optional[bytes]: ...
 
 
@@ -49,6 +51,7 @@ class UDPBroadcastTransport:
     and listens on :68. Requires root (privileged port) and should run
     inside the client host's network namespace."""
 
+    # Opens a real UDP socket that can send and receive DHCP traffic.
     def __init__(self, iface: Optional[str] = None) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -57,9 +60,11 @@ class UDPBroadcastTransport:
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, iface.encode())
         self._sock.bind(("0.0.0.0", DHCP_CLIENT_PORT))
 
+    # Broadcasts a packet to the DHCP server port.
     def send(self, data: bytes) -> None:
         self._sock.sendto(data, ("255.255.255.255", DHCP_SERVER_PORT))
 
+    # Waits for a reply packet, giving up after the timeout.
     def recv(self, timeout: float) -> Optional[bytes]:
         self._sock.settimeout(timeout)
         try:
@@ -73,10 +78,12 @@ class LoopbackTransport:
     """In-process transport used by tests: wires a DHCPClient directly to a
     DHCPServer instance's handlers, bypassing real sockets entirely."""
 
+    # Connects this transport directly to a DHCPServer object instead of a real socket.
     def __init__(self, server) -> None:
         self._server = server
         self._inbox: list[bytes] = []
 
+    # Hands a packet straight to the server's handler and stores the reply.
     def send(self, data: bytes) -> None:
         pkt = parse_dhcp_packet(data)
         reply = None
@@ -89,12 +96,14 @@ class LoopbackTransport:
         if reply is not None:
             self._inbox.append(build_dhcp_packet(reply))
 
+    # Returns the next reply that's waiting, if there is one.
     def recv(self, timeout: float) -> Optional[bytes]:
         if self._inbox:
             return self._inbox.pop(0)
         return None
 
 
+# Reads the lease time number out of a DHCP option's raw bytes.
 def _unpack_lease_time(raw: Optional[bytes]) -> int:
     return struct.unpack("!I", raw)[0] if raw else 3600
 
@@ -107,20 +116,24 @@ class LeaseInfo:
     lease_time: int
     bound_at: float = field(default_factory=time.time)
 
+    # Works out when this client should try to renew its lease.
     @property
     def t1(self) -> float:
         return self.bound_at + 0.5 * self.lease_time
 
+    # Works out when this client should try to rebind its lease.
     @property
     def t2(self) -> float:
         return self.bound_at + 0.875 * self.lease_time
 
+    # Works out when this lease stops being valid.
     @property
     def expiry(self) -> float:
         return self.bound_at + self.lease_time
 
 
 class DHCPClient:
+    # Sets up a new client with its MAC address and how it will talk to the server.
     def __init__(self, mac: str, transport: Transport, retries: int = 3, timeout: float = 2.0):
         self.mac = mac
         self.transport = transport
@@ -135,6 +148,7 @@ class DHCPClient:
         self.on_bound: Optional[Callable[[LeaseInfo], None]] = None
         self.on_expired: Optional[Callable[[], None]] = None
 
+    # Runs the full Discover, Offer, Request, Ack handshake to get an IP address.
     def run_handshake(self) -> Optional[LeaseInfo]:
         xid = random.getrandbits(32)
         discover = DHCPPacket(op=1, xid=xid, chaddr=self.mac, msg_type=OP_DHCPDISCOVER)
@@ -163,6 +177,7 @@ class DHCPClient:
             self.on_bound(self.lease)
         return self.lease
 
+    # Sends a packet and waits for a matching reply, retrying a few times if needed.
     def _send_and_wait(self, pkt: DHCPPacket, expect_types: tuple[int, ...]) -> Optional[DHCPPacket]:
         for _ in range(self.retries):
             self.transport.send(build_dhcp_packet(pkt))
@@ -174,6 +189,7 @@ class DHCPClient:
                 return reply
         return None
 
+    # Sets alarms for when to renew, rebind, and expire the current lease.
     def _schedule_timers(self) -> None:
         self._cancel_timers()
         if not self.lease:
@@ -186,6 +202,7 @@ class DHCPClient:
             t.daemon = True
             t.start()
 
+    # Tries to renew the current lease before it runs out.
     def _renew(self) -> None:
         if not self.lease:
             return
@@ -199,14 +216,17 @@ class DHCPClient:
             self.lease.bound_at = time.time()
             self._schedule_timers()
 
+    # Tries again to renew the lease, this time by asking any server.
     def _rebind(self) -> None:
         self._renew()
 
+    # Gives up the lease because renewing it never worked.
     def _expire(self) -> None:
         self.lease = None
         if self.on_expired:
             self.on_expired()
 
+    # Tells the server this client is done with its address and cancels the timers.
     def release(self) -> None:
         if not self.lease:
             return
@@ -216,6 +236,7 @@ class DHCPClient:
         self._cancel_timers()
         self.lease = None
 
+    # Stops all the renewal, rebind, and expiry alarms.
     def _cancel_timers(self) -> None:
         for t in (self._renew_timer, self._rebind_timer, self._expire_timer):
             if t:

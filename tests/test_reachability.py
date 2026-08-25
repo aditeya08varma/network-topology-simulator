@@ -7,6 +7,7 @@ from conftest import requires_root_linux
 from topology.link_manager import Subnet
 
 
+# Checks that a subnet hands out addresses one after another.
 def test_subnet_allocates_sequential_hosts():
     subnet = Subnet.from_cidr("10.0.1.0/24")
     a = subnet.allocate()
@@ -16,12 +17,14 @@ def test_subnet_allocates_sequential_hosts():
     assert a in subnet.network and b in subnet.network
 
 
+# Checks that an address gets formatted together with the right prefix length.
 def test_subnet_with_prefixlen_formats_cidr():
     subnet = Subnet.from_cidr("10.0.2.0/24")
     addr = subnet.allocate()
     assert subnet.with_prefixlen(addr) == "10.0.2.1/24"
 
 
+# Checks that a subnet complains once it runs out of addresses.
 def test_subnet_raises_when_exhausted():
     import pytest
 
@@ -32,6 +35,7 @@ def test_subnet_raises_when_exhausted():
         subnet.allocate()
 
 
+# Checks that two real hosts on the same subnet can ping each other.
 @requires_root_linux
 def test_full_mesh_reachability(built_topology):
     """Brings up the real topology and pings every host pair across the
