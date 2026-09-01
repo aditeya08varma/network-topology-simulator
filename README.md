@@ -109,3 +109,11 @@ Every test file has two kinds of tests:
   (`KernelRouteInjector`), instead of `pyroute2`. This keeps the only
   hard dependency at `pytest`. You can swap in a netlink-based injector
   by replacing that one class.
+
+## Further reading
+
+| Doc | What's in it |
+|---|---|
+| [`DETAILED_LOGS.md`](DETAILED_LOGS.md) | Build log: the whole project, with real code, diagrams, and the one real bug the process found |
+| [`EXPLANATION.md`](EXPLANATION.md) | Plain-language reference: every technology and module, explained |
+| [`LEARNINGS.md`](LEARNINGS.md) | The bug, in full, plus correctness details worth not re-breaking |
